@@ -1,4 +1,5 @@
 # Local/private configuration
+config.json
 config.local.json
 *.local.json
 

@@ -8,7 +8,7 @@ Chrome extension that sends `tel:`, `callto:` and selected phone numbers from we
 - Sends selected phone numbers from the context menu.
 - Uses Home Assistant REST API and the Android Home Assistant Companion app.
 - Opens the Android dialer with the phone number prefilled.
-- Plays a short confirmation sound after a successful send.
+- Plays a short confirmation tone after a successful send.
 - Shows an error notification if the request fails.
 - Works with Manifest V3.
 
@@ -17,12 +17,7 @@ Chrome extension that sends `tel:`, `callto:` and selected phone numbers from we
 - Google Chrome or Chromium-based browser with Manifest V3 support.
 - Home Assistant reachable from the computer running Chrome.
 - Home Assistant Companion installed on the Android phone.
-- A working legacy mobile notify service, for example:
-
-```text
-notify.mobile_app_your_device
-```
-
+- A working legacy mobile notify service, for example `notify.mobile_app_your_device`.
 - Companion permission for `command_activity` / Display over other apps.
 
 ## Home Assistant command
@@ -42,53 +37,48 @@ This opens the Android dialer with the number filled in. The call itself is not 
 
 ## Installation
 
-This project is intended to be used as an unpacked Chrome extension.
+The project is intended to be used as an unpacked Chrome extension.
 
 1. Clone or update the repository locally.
-2. Open:
+2. Copy `config.example.json` to `config.json`.
+3. Fill in the local Home Assistant address, notify service and Long-Lived Access Token.
+4. Open `chrome://extensions`.
+5. Enable **Developer mode**.
+6. Click **Load unpacked**.
+7. Select the local repository folder.
 
-```text
-chrome://extensions
-```
-
-3. Enable **Developer mode**.
-4. Click **Load unpacked**.
-5. Select the local repository folder.
-
-For the preferred update workflow, use `upgrade.cmd`.
+`config.json` is intentionally excluded from Git and must never be committed.
 
 ## Local path convention
 
-The expected local repository path is:
+The expected local repository path is either:
 
 ```text
-D:\WORK\GitHub\chromeextension-HA-PhoneDialer
+D:\WORK\GitHub\chrome-extension-ha-phone-dialer
 ```
 
 or:
 
 ```text
-N:\WORK\GitHub\chromeextension-HA-PhoneDialer
+N:\WORK\GitHub\chrome-extension-ha-phone-dialer
 ```
 
 The update script detects the active drive automatically.
 
-## Configuration and secrets
+## Configuration
 
-Home Assistant credentials, Long-Lived Access Tokens and other private configuration must never be committed to this repository.
-
-Use a local-only configuration file that is excluded by `.gitignore`.
-
-Example:
+Create `config.json` from `config.example.json`:
 
 ```json
 {
   "ha_ip": "192.168.x.x",
   "ha_port": 8123,
   "mobile_notify_service": "notify.mobile_app_your_device",
-  "token": "YOUR_LOCAL_TOKEN"
+  "token": "YOUR_LOCAL_LONG_LIVED_ACCESS_TOKEN"
 }
 ```
+
+The extension reads `config.json` locally at runtime. The file is ignored by Git so updates do not overwrite it.
 
 ## Updating
 

@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "HA Phone Dialer",
+  "version": "1.10",
+  "description": "Send selected phone numbers and tel:/callto: links to an Android dialer through Home Assistant.",
+  "permissions": [
+    "contextMenus",
+    "notifications",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon128.png",
+    "32": "icon128.png",
+    "48": "icon128.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ]
+}

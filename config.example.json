@@ -1,0 +1,6 @@
+{
+  "ha_ip": "192.168.x.x",
+  "ha_port": 8123,
+  "mobile_notify_service": "notify.mobile_app_your_device",
+  "token": "YOUR_LOCAL_LONG_LIVED_ACCESS_TOKEN"
+}
