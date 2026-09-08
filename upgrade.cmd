@@ -3,13 +3,13 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
 rem HA Phone Dialer - upgrade.cmd
-rem Version 1.00
-rem Initial installer/updater for D:\ or N:\ WORK\GitHub location.
+rem Version 1.01
+rem Use repository-matching local folder name on D:\ or N:\ WORK\GitHub.
 rem Downloads or updates the repository and preserves local secrets.
 rem ============================================================
 
 set "REPO_URL=https://github.com/Suenee/chrome-extension-ha-phone-dialer.git"
-set "FOLDER_NAME=chromeextension-HA-PhoneDialer"
+set "FOLDER_NAME=chrome-extension-ha-phone-dialer"
 set "TARGET_ROOT="
 set "TARGET_DIR="
 set "SCRIPT_DIR=%~dp0"
