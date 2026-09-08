@@ -1,0 +1,16 @@
+# Local/private configuration
+config.local.json
+*.local.json
+
+# Local backups and temporary update files
+_backup/
+_update/
+*.tmp
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# IDE/editor
+.vscode/
+.idea/
