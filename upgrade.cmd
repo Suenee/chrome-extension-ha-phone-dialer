@@ -3,55 +3,25 @@ setlocal EnableExtensions DisableDelayedExpansion
 
 rem ============================================================
 rem HA Phone Dialer - upgrade.cmd
-rem Version 1.03
-rem Fix first install when upgrade.cmd already exists in target folder.
-rem Self-refreshing bootstrap; private/untracked files are preserved.
+rem Version 1.04
+rem Remove curl self-bootstrap and update directly with Git.
+rem Fix execution from mapped network drives using safe.directory.
+rem Private/untracked files are preserved.
 rem ============================================================
 
 set "REPO_URL=https://github.com/Suenee/chrome-extension-ha-phone-dialer.git"
-set "RAW_UPGRADE=https://raw.githubusercontent.com/Suenee/chrome-extension-ha-phone-dialer/main/upgrade.cmd"
 set "FOLDER_NAME=chrome-extension-ha-phone-dialer"
-
-rem ------------------------------------------------------------
-rem Bootstrap mode.
-rem Always download the authoritative updater to TEMP first.
-rem ------------------------------------------------------------
-if /I not "%~1"=="--worker" (
-    set "BOOTSTRAP=%TEMP%\ha-phone-dialer-upgrade-%RANDOM%-%RANDOM%.cmd"
-
-    echo.
-    echo HA Phone Dialer updater bootstrap
-    echo Downloading latest upgrade.cmd...
-
-    where curl >nul 2>&1
-    if errorlevel 1 (
-        echo ERROR: curl is not available.
-        exit /b 1
-    )
-
-    curl.exe -fsSL --retry 3 --connect-timeout 15 -o "%BOOTSTRAP%" "%RAW_UPGRADE%"
-    if errorlevel 1 (
-        echo ERROR: Cannot download the latest upgrade.cmd.
-        del /q "%BOOTSTRAP%" >nul 2>&1
-        exit /b 1
-    )
-
-    call "%BOOTSTRAP%" --worker
-    set "RC=%ERRORLEVEL%"
-    del /q "%BOOTSTRAP%" >nul 2>&1
-    exit /b %RC%
-)
-
 set "TARGET_ROOT="
 set "TARGET_DIR="
 set "CURRENT_BRANCH=main"
 set "OLD_SHA="
 set "REMOTE_SHA="
 set "EXT_VERSION="
+set "SAFE_PATH="
 
 rem ------------------------------------------------------------
-rem Detect workspace. Prefer the directory from which upgrade.cmd
-rem was launched when it is already under D:/N:/WORK/GitHub.
+rem Detect workspace. Prefer the current directory when the script
+rem is launched directly from the repository on D: or N:.
 rem ------------------------------------------------------------
 for %%D in (D N) do (
     if /I "%CD%"=="%%D:\WORK\GitHub\%FOLDER_NAME%" set "TARGET_ROOT=%%D:\WORK\GitHub"
@@ -60,18 +30,16 @@ if not defined TARGET_ROOT if exist "D:\WORK\GitHub\%FOLDER_NAME%\.git" set "TAR
 if not defined TARGET_ROOT if exist "N:\WORK\GitHub\%FOLDER_NAME%\.git" set "TARGET_ROOT=N:\WORK\GitHub"
 if not defined TARGET_ROOT if exist "D:\WORK\GitHub" set "TARGET_ROOT=D:\WORK\GitHub"
 if not defined TARGET_ROOT if exist "N:\WORK\GitHub" set "TARGET_ROOT=N:\WORK\GitHub"
-if not defined TARGET_ROOT if exist "D:\" set "TARGET_ROOT=D:\WORK\GitHub"
-if not defined TARGET_ROOT if exist "N:\" set "TARGET_ROOT=N:\WORK\GitHub"
 
 if not defined TARGET_ROOT (
-    echo ERROR: Neither D: nor N: is available.
+    echo ERROR: Cannot locate D:\WORK\GitHub or N:\WORK\GitHub.
     exit /b 1
 )
 
 set "TARGET_DIR=%TARGET_ROOT%\%FOLDER_NAME%"
 
 echo.
-echo HA Phone Dialer updater 1.03
+echo HA Phone Dialer updater 1.04
 echo Target: %TARGET_DIR%
 echo.
 
@@ -81,68 +49,32 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%TARGET_ROOT%" (
-    mkdir "%TARGET_ROOT%" >nul 2>&1
-    if errorlevel 1 (
-        echo ERROR: Cannot create %TARGET_ROOT%
-        exit /b 1
-    )
+rem ------------------------------------------------------------
+rem Mark the actual repository path as safe before any repository
+rem command. This is required when N: points to a NAS/UNC share.
+rem Git itself resolves the mapped drive to its UNC path.
+rem ------------------------------------------------------------
+if exist "%TARGET_DIR%\.git" (
+    for /f "delims=" %%P in ('git -C "%TARGET_DIR%" rev-parse --show-toplevel 2^>nul') do set "SAFE_PATH=%%P"
 )
 
+if not defined SAFE_PATH (
+    for /f "tokens=2,*" %%A in ('net use %TARGET_ROOT:~0,2% 2^>nul ^| findstr /I "Remote name"') do set "SAFE_PATH=%%B\%FOLDER_NAME%"
+)
+
+if defined SAFE_PATH git config --global --add safe.directory "%SAFE_PATH%" >nul 2>&1
+
 rem ------------------------------------------------------------
-rem First installation into an empty or bootstrap-only directory.
-rem The common case is exactly this: the user downloads upgrade.cmd
-rem into the final folder and runs it there. Git clone cannot clone
-rem into that non-empty folder, so initialize Git in place instead.
+rem Repository must already be cloned. First installation is done
+rem with: git clone <repo> .
 rem ------------------------------------------------------------
 if not exist "%TARGET_DIR%\.git" (
-    if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
-
-    rem Refuse to overwrite an arbitrary non-empty directory.
-    for /f "delims=" %%F in ('dir /b /a "%TARGET_DIR%" 2^>nul') do (
-        if /I not "%%F"=="upgrade.cmd" (
-            echo ERROR: Target directory is not a Git repository and contains:
-            echo   %%F
-            echo Only bootstrap upgrade.cmd may exist before first installation.
-            echo Nothing was overwritten.
-            exit /b 1
-        )
-    )
-
-    echo First installation into existing bootstrap folder...
-    pushd "%TARGET_DIR%"
-    if errorlevel 1 exit /b 1
-
-    git init
-    if errorlevel 1 goto :install_failed
-
-    git remote add origin "%REPO_URL%"
-    if errorlevel 1 goto :install_failed
-
-    git fetch --prune origin main
-    if errorlevel 1 goto :install_failed
-
-    rem The running updater is in TEMP. Remove the downloaded bootstrap
-    rem copy so Git can populate the tracked repository version cleanly.
-    if exist "upgrade.cmd" del /q "upgrade.cmd"
-
-    git checkout -B main --track origin/main
-    if errorlevel 1 goto :install_failed
-
-    popd
-
+    echo ERROR: Repository is not cloned yet.
     echo.
-    echo Installation completed.
-    echo Repository: %TARGET_DIR%
+    echo Open the target folder and run:
+    echo   git clone %REPO_URL% .
     echo.
-    echo For the first Chrome installation:
-    echo   1. Open chrome://extensions
-    echo   2. Enable Developer mode
-    echo   3. Choose Load unpacked
-    echo   4. Select %TARGET_DIR%
-    echo.
-    start "" chrome "chrome://extensions/"
-    exit /b 0
+    exit /b 1
 )
 
 pushd "%TARGET_DIR%"
@@ -152,7 +84,7 @@ if errorlevel 1 (
 )
 
 rem ------------------------------------------------------------
-rem Local upgrade.cmd may differ because it is only a bootstrap.
+rem Local upgrade.cmd may differ because it is updater bootstrap.
 rem Any other tracked local source modification aborts safely.
 rem ------------------------------------------------------------
 git update-index -q --refresh >nul 2>&1
@@ -164,11 +96,14 @@ for /f "delims=" %%F in ('git diff --name-only') do (
         exit /b 1
     )
 )
+
 for /f "delims=" %%F in ('git diff --cached --name-only') do (
-    echo ERROR: Staged local changes detected: %%F
-    echo Commit or unstage them before upgrading.
-    popd
-    exit /b 1
+    if /I not "%%F"=="upgrade.cmd" (
+        echo ERROR: Staged local changes detected: %%F
+        echo Commit, unstage, or revert source changes before upgrading.
+        popd
+        exit /b 1
+    )
 )
 
 for /f "delims=" %%S in ('git rev-parse HEAD 2^>nul') do set "OLD_SHA=%%S"
@@ -177,6 +112,7 @@ if not defined OLD_SHA (
     popd
     exit /b 1
 )
+
 for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CURRENT_BRANCH=%%B"
 if /I "%CURRENT_BRANCH%"=="HEAD" set "CURRENT_BRANCH=main"
 
@@ -195,10 +131,15 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
+
 for /f "delims=" %%S in ('git rev-parse "origin/%CURRENT_BRANCH%"') do set "REMOTE_SHA=%%S"
 
+rem Restore only the updater itself if it was locally modified.
 git diff --quiet -- upgrade.cmd
 if errorlevel 1 git restore --worktree -- upgrade.cmd >nul 2>&1
+
+git diff --cached --quiet -- upgrade.cmd
+if errorlevel 1 git restore --staged -- upgrade.cmd >nul 2>&1
 
 if /I "%OLD_SHA%"=="%REMOTE_SHA%" (
     echo Already up to date.
@@ -236,11 +177,3 @@ echo Reload HA Phone Dialer in chrome://extensions
 start "" chrome "chrome://extensions/"
 popd
 exit /b 0
-
-:install_failed
-set "RC=%ERRORLEVEL%"
-echo.
-echo ERROR: Initial Git installation failed.
-echo Existing bootstrap files were not intentionally overwritten.
-popd
-exit /b %RC%
