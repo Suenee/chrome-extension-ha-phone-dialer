@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$Version = '1.05'
-$Revision = '1.05-folderheatmap-protocol'
+$Version = '1.06'
+$Revision = '1.06-folderheatmap-protocol'
 $Repo = $env:HAPD_UPGRADE_REPO
 if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = (Get-Location).ProviderPath }
 $Repo = [IO.Path]::GetFullPath($Repo).TrimEnd('\')
