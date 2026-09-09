@@ -4,14 +4,18 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
 rem HA Phone Dialer - upgrade.cmd
-rem Version 1.05
-rem Přechod na standard FolderHeatMap: malý launcher + upgrade.ps1,
-rem self-update, logování, verzování, barvy a bezpečný běh na síťových discích.
+rem Version 1.06
+rem Doplněn plný bootstrap podle standardu FolderHeatMap.
+rem Malý launcher + dočasný aktuální upgrade.ps1, logování,
+rem verzování, barvy a bezpečný běh na lokálních i síťových discích.
 rem ============================================================
 
-set "UPGRADE_REV=1.05-bootstrap-runner"
+set "UPGRADE_REV=1.06-bootstrap-runner"
 set "REPO_URL=https://github.com/Suenee/chrome-extension-ha-phone-dialer.git"
 set "TARGET_BRANCH=main"
+
+if /I "%~1"=="--bootstrap-internal" goto :bootstrap_internal
+
 set "REPO_DIR=%~dp0"
 if "!REPO_DIR:~-1!"=="\" set "REPO_DIR=!REPO_DIR:~0,-1!"
 
@@ -132,3 +136,44 @@ call "!BOOTSTRAP_TEMP!" --bootstrap-internal "!REPO_DIR!"
 set "BOOTSTRAP_RC=!ERRORLEVEL!"
 del /q "!BOOTSTRAP_TEMP!" >nul 2>nul
 exit /b !BOOTSTRAP_RC!
+
+:bootstrap_internal
+set "BOOTSTRAP_TARGET=%~2"
+if "!BOOTSTRAP_TARGET:~-1!"=="\" set "BOOTSTRAP_TARGET=!BOOTSTRAP_TARGET:~0,-1!"
+
+powershell.exe -NoProfile -Command "Write-Host 'Cloning HA Phone Dialer into: !BOOTSTRAP_TARGET!' -ForegroundColor Cyan"
+
+if not exist "!BOOTSTRAP_TARGET!" mkdir "!BOOTSTRAP_TARGET!" >nul 2>nul
+if not exist "!BOOTSTRAP_TARGET!" (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Could not create bootstrap target.' -ForegroundColor Red"
+    exit /b 1
+)
+
+set "BOOTSTRAP_EXTRA=0"
+for /f "delims=" %%F in ('dir /b /a "!BOOTSTRAP_TARGET!" 2^>nul') do (
+    if /I not "%%F"=="upgrade.cmd" set "BOOTSTRAP_EXTRA=1"
+)
+if "!BOOTSTRAP_EXTRA!"=="1" (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Bootstrap target must contain only upgrade.cmd.' -ForegroundColor Red"
+    exit /b 1
+)
+
+del /q "!BOOTSTRAP_TARGET!\upgrade.cmd" >nul 2>nul
+git clone --branch %TARGET_BRANCH% --single-branch "%REPO_URL%" "!BOOTSTRAP_TARGET!"
+if errorlevel 1 (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Git clone failed.' -ForegroundColor Red"
+    exit /b 1
+)
+
+if not exist "!BOOTSTRAP_TARGET!\.git" (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Clone completed, but .git is missing.' -ForegroundColor Red"
+    exit /b 1
+)
+if not exist "!BOOTSTRAP_TARGET!\upgrade.cmd" (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Clone completed, but upgrade.cmd is missing.' -ForegroundColor Red"
+    exit /b 1
+)
+
+powershell.exe -NoProfile -Command "Write-Host 'Repository cloned successfully. Handing off to current upgrade.cmd...' -ForegroundColor Green"
+call "!BOOTSTRAP_TARGET!\upgrade.cmd"
+exit /b !ERRORLEVEL!
