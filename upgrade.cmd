@@ -1,179 +1,134 @@
 @echo off
-setlocal EnableExtensions DisableDelayedExpansion
+cls
+setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
 rem HA Phone Dialer - upgrade.cmd
-rem Version 1.04
-rem Remove curl self-bootstrap and update directly with Git.
-rem Fix execution from mapped network drives using safe.directory.
-rem Private/untracked files are preserved.
+rem Version 1.05
+rem Přechod na standard FolderHeatMap: malý launcher + upgrade.ps1,
+rem self-update, logování, verzování, barvy a bezpečný běh na síťových discích.
 rem ============================================================
 
+set "UPGRADE_REV=1.05-bootstrap-runner"
 set "REPO_URL=https://github.com/Suenee/chrome-extension-ha-phone-dialer.git"
-set "FOLDER_NAME=chrome-extension-ha-phone-dialer"
-set "TARGET_ROOT="
-set "TARGET_DIR="
-set "CURRENT_BRANCH=main"
-set "OLD_SHA="
-set "REMOTE_SHA="
-set "EXT_VERSION="
-set "SAFE_PATH="
+set "TARGET_BRANCH=main"
+set "REPO_DIR=%~dp0"
+if "!REPO_DIR:~-1!"=="\" set "REPO_DIR=!REPO_DIR:~0,-1!"
 
-rem ------------------------------------------------------------
-rem Detect workspace. Prefer the current directory when the script
-rem is launched directly from the repository on D: or N:.
-rem ------------------------------------------------------------
-for %%D in (D N) do (
-    if /I "%CD%"=="%%D:\WORK\GitHub\%FOLDER_NAME%" set "TARGET_ROOT=%%D:\WORK\GitHub"
-)
-if not defined TARGET_ROOT if exist "D:\WORK\GitHub\%FOLDER_NAME%\.git" set "TARGET_ROOT=D:\WORK\GitHub"
-if not defined TARGET_ROOT if exist "N:\WORK\GitHub\%FOLDER_NAME%\.git" set "TARGET_ROOT=N:\WORK\GitHub"
-if not defined TARGET_ROOT if exist "D:\WORK\GitHub" set "TARGET_ROOT=D:\WORK\GitHub"
-if not defined TARGET_ROOT if exist "N:\WORK\GitHub" set "TARGET_ROOT=N:\WORK\GitHub"
-
-if not defined TARGET_ROOT (
-    echo ERROR: Cannot locate D:\WORK\GitHub or N:\WORK\GitHub.
-    exit /b 1
-)
-
-set "TARGET_DIR=%TARGET_ROOT%\%FOLDER_NAME%"
-
-echo.
-echo HA Phone Dialer updater 1.04
-echo Target: %TARGET_DIR%
+powershell.exe -NoProfile -Command "Write-Host 'HA Phone Dialer upgrade %UPGRADE_REV%' -ForegroundColor Cyan"
+powershell.exe -NoProfile -Command "Write-Host 'Repository: %REPO_DIR%' -ForegroundColor DarkGray"
 echo.
 
-where git >nul 2>&1
+where git.exe >nul 2>nul
 if errorlevel 1 (
-    echo ERROR: Git is not installed or not available in PATH.
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Git was not found in PATH.' -ForegroundColor Red"
     exit /b 1
 )
 
-rem ------------------------------------------------------------
-rem Mark the actual repository path as safe before any repository
-rem command. This is required when N: points to a NAS/UNC share.
-rem Git itself resolves the mapped drive to its UNC path.
-rem ------------------------------------------------------------
-if exist "%TARGET_DIR%\.git" (
-    for /f "delims=" %%P in ('git -C "%TARGET_DIR%" rev-parse --show-toplevel 2^>nul') do set "SAFE_PATH=%%P"
-)
-
-if not defined SAFE_PATH (
-    for /f "tokens=2,*" %%A in ('net use %TARGET_ROOT:~0,2% 2^>nul ^| findstr /I "Remote name"') do set "SAFE_PATH=%%B\%FOLDER_NAME%"
-)
-
-if defined SAFE_PATH git config --global --add safe.directory "%SAFE_PATH%" >nul 2>&1
-
-rem ------------------------------------------------------------
-rem Repository must already be cloned. First installation is done
-rem with: git clone <repo> .
-rem ------------------------------------------------------------
-if not exist "%TARGET_DIR%\.git" (
-    echo ERROR: Repository is not cloned yet.
-    echo.
-    echo Open the target folder and run:
-    echo   git clone %REPO_URL% .
-    echo.
-    exit /b 1
-)
-
-pushd "%TARGET_DIR%"
+pushd "!REPO_DIR!"
 if errorlevel 1 (
-    echo ERROR: Cannot enter %TARGET_DIR%
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Cannot enter repository directory.' -ForegroundColor Red"
     exit /b 1
 )
 
-rem ------------------------------------------------------------
-rem Local upgrade.cmd may differ because it is updater bootstrap.
-rem Any other tracked local source modification aborts safely.
-rem ------------------------------------------------------------
-git update-index -q --refresh >nul 2>&1
-for /f "delims=" %%F in ('git diff --name-only') do (
-    if /I not "%%F"=="upgrade.cmd" (
-        echo ERROR: Tracked local changes detected: %%F
-        echo Commit, stash, or revert source changes before upgrading.
-        popd
-        exit /b 1
-    )
+call :detect_git_repository
+if "!GIT_REPO_STATE!"=="1" goto :repository_ready
+if "!GIT_REPO_STATE!"=="2" (
+    popd
+    exit /b 1
 )
+goto :bootstrap
 
-for /f "delims=" %%F in ('git diff --cached --name-only') do (
-    if /I not "%%F"=="upgrade.cmd" (
-        echo ERROR: Staged local changes detected: %%F
-        echo Commit, unstage, or revert source changes before upgrading.
-        popd
-        exit /b 1
-    )
-)
+:repository_ready
+if not exist "!REPO_DIR!\logs" mkdir "!REPO_DIR!\logs" >nul 2>nul
 
-for /f "delims=" %%S in ('git rev-parse HEAD 2^>nul') do set "OLD_SHA=%%S"
-if not defined OLD_SHA (
-    echo ERROR: Cannot determine current Git revision.
+powershell.exe -NoProfile -Command "Write-Host '[SELF-UPDATE] Fetching authoritative updater from origin/%TARGET_BRANCH%...' -ForegroundColor Cyan"
+git fetch --prune origin %TARGET_BRANCH% >nul 2> "!REPO_DIR!\logs\upgrade-bootstrap-error.log"
+if errorlevel 1 (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: git fetch failed before updater bootstrap.' -ForegroundColor Red"
+    > "!REPO_DIR!\logs\upgrade.log" echo STATUS: FAILED - phase=SELF-UPDATE/BOOTSTRAP
     popd
     exit /b 1
 )
 
-for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CURRENT_BRANCH=%%B"
-if /I "%CURRENT_BRANCH%"=="HEAD" set "CURRENT_BRANCH=main"
-
-echo Current branch: %CURRENT_BRANCH%
-echo Fetching latest version...
-git fetch --prune origin
+set "RUNNER_TEMP=%TEMP%\HA-Phone-Dialer-upgrade-%RANDOM%-%RANDOM%.ps1"
+git show origin/%TARGET_BRANCH%:upgrade.ps1 > "!RUNNER_TEMP!" 2>nul
 if errorlevel 1 (
-    echo ERROR: git fetch failed. Local files were not changed.
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Could not extract origin/%TARGET_BRANCH%:upgrade.ps1.' -ForegroundColor Red"
+    > "!REPO_DIR!\logs\upgrade.log" echo STATUS: FAILED - phase=SELF-UPDATE/BOOTSTRAP
     popd
     exit /b 1
 )
 
-git show-ref --verify --quiet "refs/remotes/origin/%CURRENT_BRANCH%"
-if errorlevel 1 (
-    echo ERROR: Remote branch origin/%CURRENT_BRANCH% does not exist.
-    popd
-    exit /b 1
-)
+set "HAPD_UPGRADE_REPO=!REPO_DIR!"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "!RUNNER_TEMP!"
+set "UPGRADE_RC=!ERRORLEVEL!"
+del /q "!RUNNER_TEMP!" >nul 2>nul
+set "HAPD_UPGRADE_REPO="
+popd
+exit /b !UPGRADE_RC!
 
-for /f "delims=" %%S in ('git rev-parse "origin/%CURRENT_BRANCH%"') do set "REMOTE_SHA=%%S"
-
-rem Restore only the updater itself if it was locally modified.
-git diff --quiet -- upgrade.cmd
-if errorlevel 1 git restore --worktree -- upgrade.cmd >nul 2>&1
-
-git diff --cached --quiet -- upgrade.cmd
-if errorlevel 1 git restore --staged -- upgrade.cmd >nul 2>&1
-
-if /I "%OLD_SHA%"=="%REMOTE_SHA%" (
-    echo Already up to date.
-    echo Local private/untracked files were preserved.
-    popd
+:detect_git_repository
+set "GIT_REPO_STATE=0"
+set "GIT_DETECT_ERR=%TEMP%\HA-Phone-Dialer-git-detect-%RANDOM%-%RANDOM%.log"
+git rev-parse --is-inside-work-tree >nul 2> "!GIT_DETECT_ERR!"
+if not errorlevel 1 (
+    del /q "!GIT_DETECT_ERR!" >nul 2>nul
+    set "GIT_REPO_STATE=1"
     exit /b 0
 )
 
-echo Updating...
-git merge --ff-only "origin/%CURRENT_BRANCH%"
+findstr /I /C:"detected dubious ownership" "!GIT_DETECT_ERR!" >nul 2>nul
 if errorlevel 1 (
-    echo ERROR: Fast-forward update failed.
-    echo No forced reset was performed.
+    del /q "!GIT_DETECT_ERR!" >nul 2>nul
+    set "GIT_REPO_STATE=0"
+    exit /b 0
+)
+
+powershell.exe -NoProfile -Command "Write-Host 'Git marked this repository as dubious ownership. Registering this exact repository as safe.directory...' -ForegroundColor Yellow"
+set "HAPD_GIT_DETECT_ERR=!GIT_DETECT_ERR!"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$text=[IO.File]::ReadAllText($env:HAPD_GIT_DETECT_ERR); $m=[regex]::Match($text, \"safe\.directory\s+'([^']+)'\"); if(-not $m.Success){ Write-Host 'ERROR: Git reported dubious ownership, but its safe.directory path could not be parsed.' -ForegroundColor Red; exit 3 }; $safe=$m.Groups[1].Value; & git.exe config --global --add safe.directory $safe; if($LASTEXITCODE -ne 0){ Write-Host ('ERROR: Could not register Git safe.directory: ' + $safe) -ForegroundColor Red; exit $LASTEXITCODE }; Write-Host ('Git safe.directory registered: ' + $safe) -ForegroundColor Green"
+set "SAFE_RC=!ERRORLEVEL!"
+del /q "!GIT_DETECT_ERR!" >nul 2>nul
+set "HAPD_GIT_DETECT_ERR="
+if not "!SAFE_RC!"=="0" (
+    set "GIT_REPO_STATE=2"
+    exit /b 0
+)
+
+git rev-parse --is-inside-work-tree >nul 2>nul
+if errorlevel 1 (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Repository is still rejected by Git after safe.directory registration.' -ForegroundColor Red"
+    set "GIT_REPO_STATE=2"
+    exit /b 0
+)
+
+set "GIT_REPO_STATE=1"
+exit /b 0
+
+:bootstrap
+powershell.exe -NoProfile -Command "Write-Host 'Repository not found. Starting fresh bootstrap in the current directory...' -ForegroundColor Cyan"
+
+set "BOOTSTRAP_EXTRA=0"
+for /f "delims=" %%F in ('dir /b /a "!REPO_DIR!" 2^>nul') do (
+    if /I not "%%F"=="upgrade.cmd" set "BOOTSTRAP_EXTRA=1"
+)
+if "!BOOTSTRAP_EXTRA!"=="1" (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Bootstrap directory must contain only upgrade.cmd.' -ForegroundColor Red"
     popd
     exit /b 1
 )
 
-if exist "manifest.json" (
-    for /f "delims=" %%V in ('powershell -NoProfile -Command "try {(Get-Content -Raw 'manifest.json' ^| ConvertFrom-Json).version} catch {exit 1}"') do set "EXT_VERSION=%%V"
-    if not defined EXT_VERSION (
-        echo ERROR: Invalid manifest.json after update.
-        echo Rolling back tracked repository files to %OLD_SHA% ...
-        git reset --hard "%OLD_SHA%" >nul 2>&1
-        popd
-        exit /b 1
-    )
+set "BOOTSTRAP_TEMP=%TEMP%\HA-Phone-Dialer-bootstrap-%RANDOM%-%RANDOM%.cmd"
+copy /y "%~f0" "!BOOTSTRAP_TEMP!" >nul
+if errorlevel 1 (
+    powershell.exe -NoProfile -Command "Write-Host 'ERROR: Could not create temporary bootstrap runner.' -ForegroundColor Red"
+    popd
+    exit /b 1
 )
 
-echo.
-echo Update completed successfully.
-if defined EXT_VERSION echo Extension version: %EXT_VERSION%
-echo Local private/untracked files were preserved.
-echo.
-echo Reload HA Phone Dialer in chrome://extensions
-start "" chrome "chrome://extensions/"
 popd
-exit /b 0
+call "!BOOTSTRAP_TEMP!" --bootstrap-internal "!REPO_DIR!"
+set "BOOTSTRAP_RC=!ERRORLEVEL!"
+del /q "!BOOTSTRAP_TEMP!" >nul 2>nul
+exit /b !BOOTSTRAP_RC!
