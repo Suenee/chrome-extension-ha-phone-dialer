@@ -1,9 +1,10 @@
 // HA Phone Dialer
-// Version 1.11
+// Version 1.12
 // - Uses the verified Home Assistant Companion command_activity flow.
 // - Opens Android dialer via android.intent.action.DIAL.
 // - Handles selected phone numbers and tel:/callto: links.
-// - Shows the context menu only for phone-like numeric selections/links.
+// - Uses chrome.contextMenus.onShown for reliable context-menu visibility.
+// - Accepts common international phone-number notation and separators.
 // - Plays success.wav after successful sending.
 // - Shows an error notification on failure.
 
@@ -76,28 +77,23 @@ function normalizePhone(raw) {
     .replace(/^phone:/i, "")
     .trim();
 
-  // Jen číslice a běžné telefonní oddělovače. Skupiny číslic jsou povolené.
-  if (!/^[+()\d\s.\-/]+$/.test(value)) return null;
+  // Obecná telefonní notace: číslice, +, mezery, závorky, tečky,
+  // lomítka a běžné varianty pomlček. Písmena ani jiné znaky nepovolujeme.
+  if (!/^[+()\d\s.\/\-–—]+$/u.test(value)) return null;
 
-  value = value.replace(/[\s().\-/]/g, "");
+  // Formátovací znaky odstraníme; v Android dialeru zůstane čisté číslo.
+  value = value.replace(/[\s().\/\-–—]/gu, "");
+
+  // Plus smí být jen jednou a pouze na začátku.
   if (!/^\+?\d+$/.test(value)) return null;
 
   const digits = value.replace(/\D/g, "");
+
+  // E.164 dovoluje nejvýše 15 číslic. Spodní hranice 5 omezuje náhodné
+  // roky, pořadová čísla a podobné krátké výběry; lokální čísla ponecháváme.
   if (digits.length < 5 || digits.length > 15) return null;
 
   return value;
-}
-
-function setMenuVisible(visible) {
-  chrome.contextMenus.update(MENU_ID, { visible }, () => {
-    void chrome.runtime.lastError;
-  });
-}
-
-function updateMenuVisibility(raw) {
-  const visible = Boolean(normalizePhone(raw || ""));
-  setMenuVisible(visible);
-  return visible;
 }
 
 function parseNotifyService(value) {
@@ -133,15 +129,31 @@ async function sendToPhone(phone) {
   }
 }
 
+// Chrome nám při otevírání kontextové nabídky předá přímo vybraný text.
+// To je spolehlivější než pokoušet se menu skrývat z content scriptu těsně
+// před pravým kliknutím.
+chrome.contextMenus.onShown.addListener((info) => {
+  const raw = info.selectionText || info.linkUrl || "";
+  const visible = Boolean(normalizePhone(raw));
+
+  chrome.contextMenus.update(MENU_ID, { visible }, () => {
+    void chrome.runtime.lastError;
+    chrome.contextMenus.refresh();
+  });
+});
+
+chrome.contextMenus.onHidden.addListener(() => {
+  chrome.contextMenus.update(MENU_ID, { visible: false }, () => {
+    void chrome.runtime.lastError;
+  });
+});
+
 chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId !== MENU_ID) return;
 
   const raw = info.selectionText || info.linkUrl || "";
   const phone = normalizePhone(raw);
-  if (!phone) {
-    setMenuVisible(false);
-    return;
-  }
+  if (!phone) return;
 
   try {
     await sendToPhone(phone);
@@ -149,20 +161,11 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   } catch (error) {
     console.error("HA Phone Dialer:", error);
     showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
-  } finally {
-    setMenuVisible(false);
   }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message) return;
-
-  if (message.type === "context-menu-candidate") {
-    sendResponse({ ok: true, visible: updateMenuVisibility(message.raw || "") });
-    return;
-  }
-
-  if (message.type !== "dial-phone") return;
+  if (!message || message.type !== "dial-phone") return;
 
   const phone = normalizePhone(message.raw || "");
   if (!phone) {
