@@ -1,7 +1,9 @@
 // HA Phone Dialer
-// Version 1.11
-// Intercepts tel: and callto: links, including links inside iframes,
-// and controls context-menu visibility based on the actual right-click target.
+// Version 1.12
+// Intercepts tel:, callto: and phone: links, including links inside iframes
+// and clicks on nested elements inside those links.
+// Context-menu visibility is handled reliably in background.js via
+// chrome.contextMenus.onShown and the selected text supplied by Chrome.
 
 function findPhoneLink(event) {
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
@@ -29,21 +31,6 @@ function findPhoneLink(event) {
   return null;
 }
 
-function getContextCandidate(event) {
-  const selected = (window.getSelection?.().toString() || "").trim();
-  if (selected) return selected;
-  return findPhoneLink(event) || "";
-}
-
-function reportContextCandidate(event) {
-  if (event.type === "mousedown" && event.button !== 2) return;
-
-  chrome.runtime.sendMessage({
-    type: "context-menu-candidate",
-    raw: getContextCandidate(event)
-  }).catch(() => {});
-}
-
 function interceptPhoneLink(event) {
   if (event.type === "click" && event.button !== 0) return;
   if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
@@ -63,6 +50,4 @@ function interceptPhoneLink(event) {
   });
 }
 
-document.addEventListener("mousedown", reportContextCandidate, true);
-document.addEventListener("contextmenu", reportContextCandidate, true);
 document.addEventListener("click", interceptPhoneLink, true);
