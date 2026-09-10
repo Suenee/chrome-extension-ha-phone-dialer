@@ -4,13 +4,12 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
 rem HA Phone Dialer - upgrade.cmd
-rem Version 1.06
-rem Doplněn plný bootstrap podle standardu FolderHeatMap.
-rem Malý launcher + dočasný aktuální upgrade.ps1, logování,
-rem verzování, barvy a bezpečný běh na lokálních i síťových discích.
+rem Version 1.07
+rem Aktualizace assetu, ikon a validace kontextove nabidky.
+rem Launcher + docasny aktualni upgrade.ps1 podle FolderHeatMap standardu.
 rem ============================================================
 
-set "UPGRADE_REV=1.06-bootstrap-runner"
+set "UPGRADE_REV=1.07-bootstrap-runner"
 set "REPO_URL=https://github.com/Suenee/chrome-extension-ha-phone-dialer.git"
 set "TARGET_BRANCH=main"
 
