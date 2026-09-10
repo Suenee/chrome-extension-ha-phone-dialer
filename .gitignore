@@ -3,6 +3,12 @@ config.json
 config.local.json
 *.local.json
 
+# Generated local assets
+success.wav
+
+# Logs
+logs/
+
 # Local backups and temporary update files
 _backup/
 _update/

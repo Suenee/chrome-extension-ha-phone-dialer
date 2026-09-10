@@ -1,7 +1,7 @@
 // HA Phone Dialer
-// Version 1.07
-// Intercepts tel: and callto: links, including links inside iframes
-// and clicks on nested elements inside those links.
+// Version 1.11
+// Intercepts tel: and callto: links, including links inside iframes,
+// and controls context-menu visibility based on the actual right-click target.
 
 function findPhoneLink(event) {
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
@@ -9,7 +9,7 @@ function findPhoneLink(event) {
   for (const node of path) {
     if (node && node.tagName === "A") {
       const href = node.getAttribute("href") || "";
-      if (/^(tel|callto):/i.test(href.trim())) {
+      if (/^(tel|callto|phone):/i.test(href.trim())) {
         return href.trim();
       }
     }
@@ -20,13 +20,28 @@ function findPhoneLink(event) {
     const link = target.closest("a[href]");
     if (link) {
       const href = link.getAttribute("href") || "";
-      if (/^(tel|callto):/i.test(href.trim())) {
+      if (/^(tel|callto|phone):/i.test(href.trim())) {
         return href.trim();
       }
     }
   }
 
   return null;
+}
+
+function getContextCandidate(event) {
+  const selected = (window.getSelection?.().toString() || "").trim();
+  if (selected) return selected;
+  return findPhoneLink(event) || "";
+}
+
+function reportContextCandidate(event) {
+  if (event.type === "mousedown" && event.button !== 2) return;
+
+  chrome.runtime.sendMessage({
+    type: "context-menu-candidate",
+    raw: getContextCandidate(event)
+  }).catch(() => {});
 }
 
 function interceptPhoneLink(event) {
@@ -48,4 +63,6 @@ function interceptPhoneLink(event) {
   });
 }
 
+document.addEventListener("mousedown", reportContextCandidate, true);
+document.addEventListener("contextmenu", reportContextCandidate, true);
 document.addEventListener("click", interceptPhoneLink, true);

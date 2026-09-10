@@ -1,9 +1,10 @@
 // HA Phone Dialer
-// Version 1.10
+// Version 1.11
 // - Uses the verified Home Assistant Companion command_activity flow.
 // - Opens Android dialer via android.intent.action.DIAL.
 // - Handles selected phone numbers and tel:/callto: links.
-// - Plays a short confirmation tone after successful sending.
+// - Shows the context menu only for phone-like numeric selections/links.
+// - Plays success.wav after successful sending.
 // - Shows an error notification on failure.
 
 const MENU_ID = "ha-phone-dialer";
@@ -11,7 +12,6 @@ const NOTIFICATION_ICON = "icon128.png";
 
 async function ensureOffscreenDocument() {
   const offscreenUrl = chrome.runtime.getURL("offscreen.html");
-
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
     documentUrls: [offscreenUrl]
@@ -21,7 +21,7 @@ async function ensureOffscreenDocument() {
     await chrome.offscreen.createDocument({
       url: "offscreen.html",
       reasons: ["AUDIO_PLAYBACK"],
-      justification: "Play a short confirmation tone after successfully sending a phone number."
+      justification: "Play a short confirmation sound after successfully sending a phone number."
     });
   }
 }
@@ -29,9 +29,7 @@ async function ensureOffscreenDocument() {
 function showSuccess() {
   ensureOffscreenDocument()
     .then(() => chrome.runtime.sendMessage({ type: "play-success-sound" }))
-    .catch((error) => {
-      console.error("HA Phone Dialer: confirmation sound failed:", error);
-    });
+    .catch((error) => console.error("HA Phone Dialer: confirmation sound failed:", error));
 }
 
 function showError(message) {
@@ -44,28 +42,28 @@ function showError(message) {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+function createContextMenu() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: "Send number to phone",
-      contexts: ["selection", "link"]
+      title: "Poslat číslo do telefonu",
+      contexts: ["selection", "link"],
+      visible: false
     });
   });
-});
+}
+
+chrome.runtime.onInstalled.addListener(createContextMenu);
+chrome.runtime.onStartup.addListener(createContextMenu);
 
 async function loadConfig() {
   const response = await fetch(chrome.runtime.getURL("config.json"));
-  if (!response.ok) {
-    throw new Error(`Cannot load config.json: HTTP ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Cannot load config.json: HTTP ${response.status}`);
 
   const config = await response.json();
-
   if (!config.ha_ip || !config.ha_port || !config.mobile_notify_service || !config.token) {
     throw new Error("config.json is incomplete. Copy config.example.json to config.json and fill in local values.");
   }
-
   return config;
 }
 
@@ -78,32 +76,33 @@ function normalizePhone(raw) {
     .replace(/^phone:/i, "")
     .trim();
 
-  if (!/^[+()\d\s.\-/]+$/.test(value)) {
-    return null;
-  }
+  // Jen číslice a běžné telefonní oddělovače. Skupiny číslic jsou povolené.
+  if (!/^[+()\d\s.\-/]+$/.test(value)) return null;
 
   value = value.replace(/[\s().\-/]/g, "");
-
-  if (!/^\+?\d+$/.test(value)) {
-    return null;
-  }
+  if (!/^\+?\d+$/.test(value)) return null;
 
   const digits = value.replace(/\D/g, "");
-
-  if (digits.length < 5 || digits.length > 15) {
-    return null;
-  }
+  if (digits.length < 5 || digits.length > 15) return null;
 
   return value;
 }
 
+function setMenuVisible(visible) {
+  chrome.contextMenus.update(MENU_ID, { visible }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+function updateMenuVisibility(raw) {
+  const visible = Boolean(normalizePhone(raw || ""));
+  setMenuVisible(visible);
+  return visible;
+}
+
 function parseNotifyService(value) {
   const prefix = "notify.";
-
-  if (!value || !value.startsWith(prefix)) {
-    throw new Error("mobile_notify_service must start with 'notify.'");
-  }
-
+  if (!value || !value.startsWith(prefix)) throw new Error("mobile_notify_service must start with 'notify.'");
   return value.slice(prefix.length);
 }
 
@@ -111,7 +110,6 @@ async function sendToPhone(phone) {
   const config = await loadConfig();
   const service = parseNotifyService(config.mobile_notify_service);
   const url = `http://${config.ha_ip}:${config.ha_port}/api/services/notify/${service}`;
-
   const payload = {
     message: "command_activity",
     data: {
@@ -140,9 +138,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 
   const raw = info.selectionText || info.linkUrl || "";
   const phone = normalizePhone(raw);
-
   if (!phone) {
-    showError("Selected text is not a valid phone number.");
+    setMenuVisible(false);
     return;
   }
 
@@ -151,17 +148,24 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     showSuccess();
   } catch (error) {
     console.error("HA Phone Dialer:", error);
-    showError(`Number could not be sent. ${String(error)}`);
+    showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
+  } finally {
+    setMenuVisible(false);
   }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "dial-phone") return;
+  if (!message) return;
+
+  if (message.type === "context-menu-candidate") {
+    sendResponse({ ok: true, visible: updateMenuVisibility(message.raw || "") });
+    return;
+  }
+
+  if (message.type !== "dial-phone") return;
 
   const phone = normalizePhone(message.raw || "");
-
   if (!phone) {
-    showError("Link does not contain a valid phone number.");
     sendResponse({ ok: false, error: "invalid_phone" });
     return;
   }
@@ -173,7 +177,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })
     .catch((error) => {
       console.error("HA Phone Dialer:", error);
-      showError(`Number could not be sent. ${String(error)}`);
+      showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
       sendResponse({ ok: false, error: String(error) });
     });
 
