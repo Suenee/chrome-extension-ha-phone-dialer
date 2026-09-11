@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$Version = '1.07'
-$Revision = '1.07-assets-icons-context-menu'
+$Version = '1.08'
+$Revision = '1.08-no-chrome-autostart'
 $Repo = $env:HAPD_UPGRADE_REPO
 if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = (Get-Location).ProviderPath }
 $Repo = [IO.Path]::GetFullPath($Repo).TrimEnd('\')
@@ -132,9 +132,8 @@ try {
     if ($HadWarning) { Write-Line 'STATUS: WARNING - phase=COMPLETE' Yellow } else { Write-Line 'STATUS: SUCCESS - phase=COMPLETE' Green }
     Write-Line ("Extension version: $($manifest.version)") Green
     Write-Line ("Repository: $Repo") Green
-    Write-Line 'ACTION REQUIRED: Reload HA Phone Dialer in chrome://extensions' Yellow
+    Write-Line 'ACTION REQUIRED: Reload HA Phone Dialer manually in chrome://extensions' Yellow
     Info '============================================================'
-    try { Start-Process 'chrome.exe' 'chrome://extensions/' | Out-Null } catch { Warn 'Could not open chrome://extensions automatically.' }
     exit 0
 }
 catch {
