@@ -1,9 +1,10 @@
 // HA Phone Dialer
-// Version 1.12
+// Version 1.13
 // - Uses the verified Home Assistant Companion command_activity flow.
 // - Opens Android dialer via android.intent.action.DIAL.
 // - Handles selected phone numbers and tel:/callto: links.
-// - Uses chrome.contextMenus.onShown for reliable context-menu visibility.
+// - Keeps the context-menu item available for text selections.
+// - Validates the selected text only after the menu item is clicked.
 // - Accepts common international phone-number notation and separators.
 // - Plays success.wav after successful sending.
 // - Shows an error notification on failure.
@@ -48,8 +49,7 @@ function createContextMenu() {
     chrome.contextMenus.create({
       id: MENU_ID,
       title: "Poslat číslo do telefonu",
-      contexts: ["selection", "link"],
-      visible: false
+      contexts: ["selection"]
     });
   });
 }
@@ -129,31 +129,16 @@ async function sendToPhone(phone) {
   }
 }
 
-// Chrome nám při otevírání kontextové nabídky předá přímo vybraný text.
-// To je spolehlivější než pokoušet se menu skrývat z content scriptu těsně
-// před pravým kliknutím.
-chrome.contextMenus.onShown.addListener((info) => {
-  const raw = info.selectionText || info.linkUrl || "";
-  const visible = Boolean(normalizePhone(raw));
-
-  chrome.contextMenus.update(MENU_ID, { visible }, () => {
-    void chrome.runtime.lastError;
-    chrome.contextMenus.refresh();
-  });
-});
-
-chrome.contextMenus.onHidden.addListener(() => {
-  chrome.contextMenus.update(MENU_ID, { visible: false }, () => {
-    void chrome.runtime.lastError;
-  });
-});
-
 chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId !== MENU_ID) return;
 
-  const raw = info.selectionText || info.linkUrl || "";
+  const raw = info.selectionText || "";
   const phone = normalizePhone(raw);
-  if (!phone) return;
+
+  if (!phone) {
+    showError("Vybraný text nevypadá jako platné telefonní číslo.");
+    return;
+  }
 
   try {
     await sendToPhone(phone);
