@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HA Phone Dialer",
-  "version": "1.12",
+  "version": "1.13",
   "description": "Send selected phone numbers and tel:/callto: links to an Android dialer through Home Assistant.",
   "permissions": [
     "contextMenus",
