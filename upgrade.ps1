@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$Version = '1.08'
-$Revision = '1.08-no-chrome-autostart'
+$Version = '1.09'
+$Revision = '1.09-config-migration-no-fetch'
 $Repo = $env:HAPD_UPGRADE_REPO
 if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = (Get-Location).ProviderPath }
 $Repo = [IO.Path]::GetFullPath($Repo).TrimEnd('\')
@@ -98,6 +98,34 @@ try {
     if (-not $head -or -not $remoteHead -or $head -ne $remoteHead) { Fail 'REPOSITORY' 'Local HEAD is not identical to origin/main after synchronization.' }
     Info ("[GIT] Synchronized commit: $head")
 
+    $FailPhase = 'CONFIG'
+    $legacyConfig = Join-Path $Repo 'config.json'
+    $localConfig = Join-Path $Repo 'config.local.js'
+
+    if (-not (Test-Path -LiteralPath $localConfig)) {
+        if (Test-Path -LiteralPath $legacyConfig) {
+            Info '[CONFIG] Migrating private config.json to config.local.js...'
+            try {
+                $cfg = Get-Content -Raw -LiteralPath $legacyConfig | ConvertFrom-Json
+            } catch {
+                Fail $FailPhase ("config.json is invalid JSON: $($_.Exception.Message)")
+            }
+
+            if (-not $cfg.ha_ip -or -not $cfg.ha_port -or -not $cfg.mobile_notify_service -or -not $cfg.token) {
+                Fail $FailPhase 'config.json is incomplete.'
+            }
+
+            $json = $cfg | ConvertTo-Json -Compress -Depth 10
+            $js = "globalThis.HA_PHONE_DIALER_CONFIG = $json;`r`n"
+            [IO.File]::WriteAllText($localConfig, $js, $Utf8)
+            Info '[CONFIG] Created private config.local.js from existing config.json.'
+        } else {
+            Fail $FailPhase 'Missing private configuration. Create config.local.js from config.local.example.js.'
+        }
+    } else {
+        Info '[CONFIG] Private config.local.js already exists; preserved.'
+    }
+
     $FailPhase = 'ASSETS'
     $soundSource = Join-Path $Repo 'success.wav.b64'
     $soundTarget = Join-Path $Repo 'success.wav'
@@ -111,21 +139,26 @@ try {
     Info ("[ASSETS] Restored success.wav ($($wav.Length) bytes).")
 
     $FailPhase = 'VERIFY'
-    Info '[VERIFY] Validating manifest.json and extension assets...'
+    Info '[VERIFY] Validating manifest.json, private config and extension assets...'
     $manifestPath = Join-Path $Repo 'manifest.json'
     if (-not (Test-Path -LiteralPath $manifestPath)) { Fail $FailPhase 'manifest.json is missing.' }
     try { $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json } catch { Fail $FailPhase ("manifest.json is invalid JSON: $($_.Exception.Message)") }
     if ([string]::IsNullOrWhiteSpace([string]$manifest.version)) { Fail $FailPhase 'manifest.json does not contain a valid version.' }
 
-    foreach ($name in @('background.js','content.js','offscreen.html','offscreen.js','success.wav')) {
+    foreach ($name in @('background.js','content.js','offscreen.html','offscreen.js','success.wav','config.local.js')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Repo $name))) { Fail $FailPhase ("Required file is missing: $name") }
     }
     foreach ($spec in @(@('icon16.png',16),@('icon32.png',32),@('icon48.png',48),@('icon128.png',128))) {
         $p = Join-Path $Repo $spec[0]
         if (-not (Test-Png $p $spec[1] $spec[1])) { Fail $FailPhase ("Invalid PNG icon or dimensions: $($spec[0]) (expected $($spec[1])x$($spec[1]))") }
     }
+
+    $backgroundText = Get-Content -Raw -LiteralPath (Join-Path $Repo 'background.js')
+    if ($backgroundText -match 'fetch\s*\(') { Fail $FailPhase 'background.js still contains fetch(); version 1.16 must not use fetch().' }
+    if ($backgroundText -notmatch 'importScripts\("config\.local\.js"\)') { Fail $FailPhase 'background.js does not load config.local.js.' }
+
     Info ("[VERIFY] Extension version: $($manifest.version)")
-    Info '[VERIFY] Icons, sound and required extension files are valid.'
+    Info '[VERIFY] Icons, sound, private config and required extension files are valid.'
 
     Info ''
     Info '============================================================'
