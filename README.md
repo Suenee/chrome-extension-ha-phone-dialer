@@ -6,10 +6,10 @@ Chrome extension that sends `tel:`, `callto:` and selected phone numbers from we
 
 - Intercepts `tel:` and `callto:` links directly in Chrome.
 - Sends selected phone numbers from the context menu.
-- Uses Home Assistant REST API and the Android Home Assistant Companion app.
+- Uses the Home Assistant WebSocket API.
 - Opens the Android dialer with the phone number prefilled.
 - Plays a short confirmation tone after a successful send.
-- Shows an error notification if the request fails.
+- Supports runtime logging modes `off`, `phone`, `single` and `all`.
 - Works with Manifest V3.
 
 ## Requirements
@@ -40,14 +40,14 @@ This opens the Android dialer with the number filled in. The call itself is not 
 The project is intended to be used as an unpacked Chrome extension.
 
 1. Clone or update the repository locally.
-2. Copy `config.example.json` to `config.json`.
+2. Copy `config.local.example.js` to `config.local.js` if the updater has not created it already.
 3. Fill in the local Home Assistant address, notify service and Long-Lived Access Token.
 4. Open `chrome://extensions`.
 5. Enable **Developer mode**.
 6. Click **Load unpacked**.
 7. Select the local repository folder.
 
-`config.json` is intentionally excluded from Git and must never be committed.
+`config.local.js` is intentionally excluded from Git and must never be committed.
 
 ## Local path convention
 
@@ -63,22 +63,34 @@ or:
 N:\WORK\GitHub\chrome-extension-ha-phone-dialer
 ```
 
-The update script detects the active drive automatically.
-
 ## Configuration
 
-Create `config.json` from `config.example.json`:
+Create or edit `config.local.js`:
 
-```json
-{
-  "ha_ip": "192.168.x.x",
-  "ha_port": 8123,
-  "mobile_notify_service": "notify.mobile_app_your_device",
-  "token": "YOUR_LOCAL_LONG_LIVED_ACCESS_TOKEN"
-}
+```js
+globalThis.HA_PHONE_DIALER_CONFIG = {
+  ha_ip: "192.168.x.x",
+  ha_port: 8123,
+  mobile_notify_service: "notify.mobile_app_your_device",
+  token: "YOUR_LOCAL_LONG_LIVED_ACCESS_TOKEN",
+  log_mode: "off"
+};
 ```
 
-The extension reads `config.json` locally at runtime. The file is ignored by Git so updates do not overwrite it.
+The extension loads this file directly with `importScripts()`. No `fetch()` call is used for local configuration.
+
+## Runtime logging
+
+Set `log_mode` in `config.local.js` to one of these values:
+
+- `off` - runtime logging disabled.
+- `phone` - the stored log is cleared when a phone-number request starts and then contains only the flow for that number.
+- `single` - the stored log is cleared when the current background service-worker instance starts and then records that instance.
+- `all` - logs are appended continuously without an application-level size limit.
+
+Runtime logs are stored in `chrome.storage.local` under the key `runtime_log` and are also mirrored to the background service-worker console. The Home Assistant token is never written to the runtime log.
+
+The `logs\upgrade.log` file belongs only to `upgrade.cmd` / `upgrade.ps1`; Chrome extensions cannot directly append a normal file inside the unpacked extension directory.
 
 ## Updating
 
@@ -90,7 +102,7 @@ upgrade.cmd
 
 The script updates the repository from GitHub while preserving local-only configuration files.
 
-After an update, open `chrome://extensions` and click **Reload** for the extension if Chrome has not reloaded it automatically.
+After an update, open `chrome://extensions` and click **Reload** for the extension.
 
 ## Security
 
