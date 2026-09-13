@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$Version = '1.09'
-$Revision = '1.09-config-migration-no-fetch'
+$Version = '1.10'
+$Revision = '1.10-config-bootstrap'
 $Repo = $env:HAPD_UPGRADE_REPO
 if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = (Get-Location).ProviderPath }
 $Repo = [IO.Path]::GetFullPath($Repo).TrimEnd('\')
@@ -101,6 +101,7 @@ try {
     $FailPhase = 'CONFIG'
     $legacyConfig = Join-Path $Repo 'config.json'
     $localConfig = Join-Path $Repo 'config.local.js'
+    $localTemplate = Join-Path $Repo 'config.local.example.js'
 
     if (-not (Test-Path -LiteralPath $localConfig)) {
         if (Test-Path -LiteralPath $legacyConfig) {
@@ -110,17 +111,18 @@ try {
             } catch {
                 Fail $FailPhase ("config.json is invalid JSON: $($_.Exception.Message)")
             }
-
             if (-not $cfg.ha_ip -or -not $cfg.ha_port -or -not $cfg.mobile_notify_service -or -not $cfg.token) {
                 Fail $FailPhase 'config.json is incomplete.'
             }
-
             $json = $cfg | ConvertTo-Json -Compress -Depth 10
             $js = "globalThis.HA_PHONE_DIALER_CONFIG = $json;`r`n"
             [IO.File]::WriteAllText($localConfig, $js, $Utf8)
             Info '[CONFIG] Created private config.local.js from existing config.json.'
+        } elseif (Test-Path -LiteralPath $localTemplate) {
+            Copy-Item -LiteralPath $localTemplate -Destination $localConfig -Force
+            Warn 'Private config.local.js did not exist. A local template was created; fill in ha_ip, ha_port, mobile_notify_service and token before reloading the extension.'
         } else {
-            Fail $FailPhase 'Missing private configuration. Create config.local.js from config.local.example.js.'
+            Fail $FailPhase 'Missing config.local.example.js template.'
         }
     } else {
         Info '[CONFIG] Private config.local.js already exists; preserved.'
@@ -157,15 +159,22 @@ try {
     if ($backgroundText -match 'fetch\s*\(') { Fail $FailPhase 'background.js still contains fetch(); version 1.16 must not use fetch().' }
     if ($backgroundText -notmatch 'importScripts\("config\.local\.js"\)') { Fail $FailPhase 'background.js does not load config.local.js.' }
 
+    $configText = Get-Content -Raw -LiteralPath $localConfig
+    $configLooksDefault = ($configText -match '192\.168\.x\.x' -or $configText -match 'YOUR_LOCAL_LONG_LIVED_ACCESS_TOKEN' -or $configText -match 'notify\.mobile_app_your_device')
+    if ($configLooksDefault) {
+        Warn 'config.local.js still contains template values. Fill it in before using the extension.'
+    }
+
     Info ("[VERIFY] Extension version: $($manifest.version)")
-    Info '[VERIFY] Icons, sound, private config and required extension files are valid.'
+    Info '[VERIFY] Icons, sound, private config file and required extension files are valid.'
 
     Info ''
     Info '============================================================'
     if ($HadWarning) { Write-Line 'STATUS: WARNING - phase=COMPLETE' Yellow } else { Write-Line 'STATUS: SUCCESS - phase=COMPLETE' Green }
     Write-Line ("Extension version: $($manifest.version)") Green
     Write-Line ("Repository: $Repo") Green
-    Write-Line 'ACTION REQUIRED: Reload HA Phone Dialer manually in chrome://extensions' Yellow
+    if ($configLooksDefault) { Write-Line 'ACTION REQUIRED: Edit config.local.js, then reload HA Phone Dialer in chrome://extensions' Yellow }
+    else { Write-Line 'ACTION REQUIRED: Reload HA Phone Dialer manually in chrome://extensions' Yellow }
     Info '============================================================'
     exit 0
 }
