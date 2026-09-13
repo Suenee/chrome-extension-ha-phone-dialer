@@ -1,19 +1,16 @@
 // HA Phone Dialer
-// Version 1.10
-// - Opraven cílový notify service na notify.mobile_app_souhvezdi_liry.
-// - Používá ověřený Home Assistant Companion příkaz command_activity.
+// Version 1.15
+// - Návrat k ověřené logice verze 1.10 pro menu, validaci a tel:/callto:.
+// - REST fetch na Home Assistant byl nahrazen WebSocket API.
+// - Cílová služba zůstává notify.mobile_app_souhvezdi_liry.
 // - Android otevře číselník přes android.intent.action.DIAL.
-// - Kontextové menu funguje pro označený text i tel:/callto: odkazy.
-// - Přidána zelená ikona otočného telefonu do rozšíření a kontextového menu.
-// - Přímý klik na tel:/callto: odkaz je zachycen a poslán do telefonu.
 
 const MENU_ID = "ha-phone-dialer";
-
 const NOTIFICATION_ICON = "icon128.png";
+const WS_TIMEOUT_MS = 10000;
 
 async function ensureOffscreenDocument() {
   const offscreenUrl = chrome.runtime.getURL("offscreen.html");
-
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
     documentUrls: [offscreenUrl]
@@ -28,7 +25,7 @@ async function ensureOffscreenDocument() {
   }
 }
 
-function showSuccess(phone) {
+function showSuccess() {
   ensureOffscreenDocument()
     .then(() => chrome.runtime.sendMessage({ type: "play-success-sound" }))
     .catch((error) => {
@@ -41,12 +38,12 @@ function showError(message) {
     type: "basic",
     iconUrl: NOTIFICATION_ICON,
     title: "HA Phone Dialer – chyba",
-    message: message,
+    message,
     priority: 2
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+function createContextMenu() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
@@ -54,7 +51,10 @@ chrome.runtime.onInstalled.addListener(() => {
       contexts: ["selection", "link"]
     });
   });
-});
+}
+
+chrome.runtime.onInstalled.addListener(createContextMenu);
+chrome.runtime.onStartup.addListener(createContextMenu);
 
 async function loadConfig() {
   const response = await fetch(chrome.runtime.getURL("config.json"));
@@ -62,7 +62,13 @@ async function loadConfig() {
     throw new Error(`Nelze načíst config.json: HTTP ${response.status}`);
   }
 
-  return await response.json();
+  const config = await response.json();
+
+  if (!config.ha_ip || !config.ha_port || !config.mobile_notify_service || !config.token) {
+    throw new Error("config.json je neúplný.");
+  }
+
+  return config;
 }
 
 function normalizePhone(raw) {
@@ -74,22 +80,17 @@ function normalizePhone(raw) {
     .replace(/^phone:/i, "")
     .trim();
 
-  // Povolíme běžné formáty telefonních čísel.
   if (!/^[+()\d\s.\-/]+$/.test(value)) {
     return null;
   }
 
-  // Odstraníme mezery a běžné oddělovače.
   value = value.replace(/[\s().\-/]/g, "");
 
-  // Plus může být pouze na začátku.
   if (!/^\+?\d+$/.test(value)) {
     return null;
   }
 
   const digits = value.replace(/\D/g, "");
-
-  // Praktický rozsah délky telefonního čísla.
   if (digits.length < 5 || digits.length > 15) {
     return null;
   }
@@ -107,35 +108,111 @@ function parseNotifyService(value) {
   return value.slice(prefix.length);
 }
 
+function callHomeAssistantWebSocket(config, service, phone) {
+  return new Promise((resolve, reject) => {
+    const url = `ws://${config.ha_ip}:${config.ha_port}/api/websocket`;
+    const socket = new WebSocket(url);
+    let authenticated = false;
+    let serviceSent = false;
+    let finished = false;
+
+    const timeout = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      try { socket.close(); } catch {}
+      reject(new Error("Home Assistant WebSocket timeout."));
+    }, WS_TIMEOUT_MS);
+
+    function finishOk() {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      try { socket.close(); } catch {}
+      resolve(true);
+    }
+
+    function finishError(message) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      try { socket.close(); } catch {}
+      reject(new Error(message));
+    }
+
+    socket.onerror = () => {
+      finishError(`Nelze navázat WebSocket spojení s Home Assistantem ${config.ha_ip}:${config.ha_port}.`);
+    };
+
+    socket.onclose = () => {
+      if (!finished) {
+        finishError("Home Assistant WebSocket byl ukončen před dokončením požadavku.");
+      }
+    };
+
+    socket.onmessage = (event) => {
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        finishError("Home Assistant poslal neplatnou WebSocket odpověď.");
+        return;
+      }
+
+      if (message.type === "auth_required") {
+        socket.send(JSON.stringify({
+          type: "auth",
+          access_token: config.token
+        }));
+        return;
+      }
+
+      if (message.type === "auth_invalid") {
+        finishError(`Home Assistant odmítl token: ${message.message || "auth_invalid"}`);
+        return;
+      }
+
+      if (message.type === "auth_ok") {
+        authenticated = true;
+
+        socket.send(JSON.stringify({
+          id: 1,
+          type: "call_service",
+          domain: "notify",
+          service,
+          service_data: {
+            message: "command_activity",
+            data: {
+              intent_action: "android.intent.action.DIAL",
+              intent_uri: `tel:${phone}`
+            }
+          }
+        }));
+
+        serviceSent = true;
+        return;
+      }
+
+      if (message.type === "result" && message.id === 1) {
+        if (!authenticated || !serviceSent) {
+          finishError("Home Assistant vrátil výsledek v neočekávaném stavu.");
+          return;
+        }
+
+        if (message.success) {
+          finishOk();
+        } else {
+          const details = message.error?.message || message.error?.code || "unknown error";
+          finishError(`Home Assistant call_service selhal: ${details}`);
+        }
+      }
+    };
+  });
+}
+
 async function sendToPhone(phone) {
   const config = await loadConfig();
   const service = parseNotifyService(config.mobile_notify_service);
-
-  const url = `http://${config.ha_ip}:${config.ha_port}/api/services/notify/${service}`;
-
-  const payload = {
-    message: "command_activity",
-    data: {
-      intent_action: "android.intent.action.DIAL",
-      intent_uri: `tel:${phone}`
-    }
-  };
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${config.token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Home Assistant HTTP ${response.status}: ${body}`);
-  }
-
-  return true;
+  return await callHomeAssistantWebSocket(config, service, phone);
 }
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
@@ -145,7 +222,6 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const phone = normalizePhone(raw);
 
   if (!phone) {
-    console.error("HA Phone Dialer: text není platné telefonní číslo:", raw);
     showError("Vybraný text není platné telefonní číslo.");
     return;
   }
@@ -153,22 +229,19 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   try {
     await sendToPhone(phone);
     console.log("HA Phone Dialer: dialer požadavek odeslán:", phone);
-    showSuccess(phone);
+    showSuccess();
   } catch (error) {
     console.error("HA Phone Dialer:", error);
     showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
   }
 });
 
-
-// Přijímá telefonní číslo zachycené content scriptem při kliknutí na tel:/callto:.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "dial-phone") return;
 
   const phone = normalizePhone(message.raw || "");
 
   if (!phone) {
-    console.error("HA Phone Dialer: odkaz neobsahuje platné telefonní číslo:", message.raw);
     showError("Odkaz neobsahuje platné telefonní číslo.");
     sendResponse({ ok: false, error: "invalid_phone" });
     return;
@@ -177,7 +250,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   sendToPhone(phone)
     .then(() => {
       console.log("HA Phone Dialer: tel:/callto: odkaz odeslán:", phone);
-      showSuccess(phone);
+      showSuccess();
       sendResponse({ ok: true });
     })
     .catch((error) => {
