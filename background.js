@@ -1,19 +1,19 @@
 // HA Phone Dialer
-// Version 1.13
-// - Uses the verified Home Assistant Companion command_activity flow.
-// - Opens Android dialer via android.intent.action.DIAL.
-// - Handles selected phone numbers and tel:/callto: links.
-// - Keeps the context-menu item available for text selections.
-// - Validates the selected text only after the menu item is clicked.
-// - Accepts common international phone-number notation and separators.
-// - Plays success.wav after successful sending.
-// - Shows an error notification on failure.
+// Version 1.10
+// - Opraven cílový notify service na notify.mobile_app_souhvezdi_liry.
+// - Používá ověřený Home Assistant Companion příkaz command_activity.
+// - Android otevře číselník přes android.intent.action.DIAL.
+// - Kontextové menu funguje pro označený text i tel:/callto: odkazy.
+// - Přidána zelená ikona otočného telefonu do rozšíření a kontextového menu.
+// - Přímý klik na tel:/callto: odkaz je zachycen a poslán do telefonu.
 
 const MENU_ID = "ha-phone-dialer";
+
 const NOTIFICATION_ICON = "icon128.png";
 
 async function ensureOffscreenDocument() {
   const offscreenUrl = chrome.runtime.getURL("offscreen.html");
+
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
     documentUrls: [offscreenUrl]
@@ -23,49 +23,46 @@ async function ensureOffscreenDocument() {
     await chrome.offscreen.createDocument({
       url: "offscreen.html",
       reasons: ["AUDIO_PLAYBACK"],
-      justification: "Play a short confirmation sound after successfully sending a phone number."
+      justification: "Přehrání krátkého potvrzovacího zvuku po úspěšném odeslání čísla."
     });
   }
 }
 
-function showSuccess() {
+function showSuccess(phone) {
   ensureOffscreenDocument()
     .then(() => chrome.runtime.sendMessage({ type: "play-success-sound" }))
-    .catch((error) => console.error("HA Phone Dialer: confirmation sound failed:", error));
+    .catch((error) => {
+      console.error("HA Phone Dialer: potvrzovací zvuk:", error);
+    });
 }
 
 function showError(message) {
   chrome.notifications.create({
     type: "basic",
     iconUrl: NOTIFICATION_ICON,
-    title: "HA Phone Dialer - error",
-    message,
+    title: "HA Phone Dialer – chyba",
+    message: message,
     priority: 2
   });
 }
 
-function createContextMenu() {
+chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
       title: "Poslat číslo do telefonu",
-      contexts: ["selection"]
+      contexts: ["selection", "link"]
     });
   });
-}
-
-chrome.runtime.onInstalled.addListener(createContextMenu);
-chrome.runtime.onStartup.addListener(createContextMenu);
+});
 
 async function loadConfig() {
   const response = await fetch(chrome.runtime.getURL("config.json"));
-  if (!response.ok) throw new Error(`Cannot load config.json: HTTP ${response.status}`);
-
-  const config = await response.json();
-  if (!config.ha_ip || !config.ha_port || !config.mobile_notify_service || !config.token) {
-    throw new Error("config.json is incomplete. Copy config.example.json to config.json and fill in local values.");
+  if (!response.ok) {
+    throw new Error(`Nelze načíst config.json: HTTP ${response.status}`);
   }
-  return config;
+
+  return await response.json();
 }
 
 function normalizePhone(raw) {
@@ -77,35 +74,45 @@ function normalizePhone(raw) {
     .replace(/^phone:/i, "")
     .trim();
 
-  // Obecná telefonní notace: číslice, +, mezery, závorky, tečky,
-  // lomítka a běžné varianty pomlček. Písmena ani jiné znaky nepovolujeme.
-  if (!/^[+()\d\s.\/\-–—]+$/u.test(value)) return null;
+  // Povolíme běžné formáty telefonních čísel.
+  if (!/^[+()\d\s.\-/]+$/.test(value)) {
+    return null;
+  }
 
-  // Formátovací znaky odstraníme; v Android dialeru zůstane čisté číslo.
-  value = value.replace(/[\s().\/\-–—]/gu, "");
+  // Odstraníme mezery a běžné oddělovače.
+  value = value.replace(/[\s().\-/]/g, "");
 
-  // Plus smí být jen jednou a pouze na začátku.
-  if (!/^\+?\d+$/.test(value)) return null;
+  // Plus může být pouze na začátku.
+  if (!/^\+?\d+$/.test(value)) {
+    return null;
+  }
 
   const digits = value.replace(/\D/g, "");
 
-  // E.164 dovoluje nejvýše 15 číslic. Spodní hranice 5 omezuje náhodné
-  // roky, pořadová čísla a podobné krátké výběry; lokální čísla ponecháváme.
-  if (digits.length < 5 || digits.length > 15) return null;
+  // Praktický rozsah délky telefonního čísla.
+  if (digits.length < 5 || digits.length > 15) {
+    return null;
+  }
 
   return value;
 }
 
 function parseNotifyService(value) {
   const prefix = "notify.";
-  if (!value || !value.startsWith(prefix)) throw new Error("mobile_notify_service must start with 'notify.'");
+
+  if (!value || !value.startsWith(prefix)) {
+    throw new Error("mobile_notify_service musí začínat 'notify.'");
+  }
+
   return value.slice(prefix.length);
 }
 
 async function sendToPhone(phone) {
   const config = await loadConfig();
   const service = parseNotifyService(config.mobile_notify_service);
+
   const url = `http://${config.ha_ip}:${config.ha_port}/api/services/notify/${service}`;
+
   const payload = {
     message: "command_activity",
     data: {
@@ -127,40 +134,50 @@ async function sendToPhone(phone) {
     const body = await response.text();
     throw new Error(`Home Assistant HTTP ${response.status}: ${body}`);
   }
+
+  return true;
 }
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId !== MENU_ID) return;
 
-  const raw = info.selectionText || "";
+  const raw = info.selectionText || info.linkUrl || "";
   const phone = normalizePhone(raw);
 
   if (!phone) {
-    showError("Vybraný text nevypadá jako platné telefonní číslo.");
+    console.error("HA Phone Dialer: text není platné telefonní číslo:", raw);
+    showError("Vybraný text není platné telefonní číslo.");
     return;
   }
 
   try {
     await sendToPhone(phone);
-    showSuccess();
+    console.log("HA Phone Dialer: dialer požadavek odeslán:", phone);
+    showSuccess(phone);
   } catch (error) {
     console.error("HA Phone Dialer:", error);
     showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
   }
 });
 
+
+// Přijímá telefonní číslo zachycené content scriptem při kliknutí na tel:/callto:.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "dial-phone") return;
 
   const phone = normalizePhone(message.raw || "");
+
   if (!phone) {
+    console.error("HA Phone Dialer: odkaz neobsahuje platné telefonní číslo:", message.raw);
+    showError("Odkaz neobsahuje platné telefonní číslo.");
     sendResponse({ ok: false, error: "invalid_phone" });
     return;
   }
 
   sendToPhone(phone)
     .then(() => {
-      showSuccess();
+      console.log("HA Phone Dialer: tel:/callto: odkaz odeslán:", phone);
+      showSuccess(phone);
       sendResponse({ ok: true });
     })
     .catch((error) => {
