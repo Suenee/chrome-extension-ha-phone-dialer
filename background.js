@@ -1,12 +1,17 @@
 // HA Phone Dialer
-// Version 1.15
-// - Návrat k ověřené logice verze 1.10 pro menu, validaci a tel:/callto:.
-// - REST fetch na Home Assistant byl nahrazen WebSocket API.
-// - Cílová služba zůstává notify.mobile_app_souhvezdi_liry.
-// - Android otevře číselník přes android.intent.action.DIAL.
+// Version 1.16
+// - Konfigurace se načítá přímo z lokálního config.local.js bez fetch().
+// - Komunikace s Home Assistantem zůstává přes WebSocket API.
+// - Odstraněny systémové Chrome notifikace, které způsobovaly chybu ikon.
+// - Kontextové menu zůstává dostupné pro výběr textu a odkazy.
+
+try {
+  importScripts("config.local.js");
+} catch (error) {
+  console.error("HA Phone Dialer: config.local.js nelze načíst:", error);
+}
 
 const MENU_ID = "ha-phone-dialer";
-const NOTIFICATION_ICON = "icon128.png";
 const WS_TIMEOUT_MS = 10000;
 
 async function ensureOffscreenDocument() {
@@ -28,19 +33,15 @@ async function ensureOffscreenDocument() {
 function showSuccess() {
   ensureOffscreenDocument()
     .then(() => chrome.runtime.sendMessage({ type: "play-success-sound" }))
-    .catch((error) => {
-      console.error("HA Phone Dialer: potvrzovací zvuk:", error);
-    });
+    .catch((error) => console.error("HA Phone Dialer: potvrzovací zvuk:", error));
 }
 
-function showError(message) {
-  chrome.notifications.create({
-    type: "basic",
-    iconUrl: NOTIFICATION_ICON,
-    title: "HA Phone Dialer – chyba",
-    message,
-    priority: 2
-  });
+function reportError(message, error = null) {
+  if (error) {
+    console.error(`HA Phone Dialer: ${message}`, error);
+  } else {
+    console.error(`HA Phone Dialer: ${message}`);
+  }
 }
 
 function createContextMenu() {
@@ -56,16 +57,15 @@ function createContextMenu() {
 chrome.runtime.onInstalled.addListener(createContextMenu);
 chrome.runtime.onStartup.addListener(createContextMenu);
 
-async function loadConfig() {
-  const response = await fetch(chrome.runtime.getURL("config.json"));
-  if (!response.ok) {
-    throw new Error(`Nelze načíst config.json: HTTP ${response.status}`);
+function loadConfig() {
+  const config = globalThis.HA_PHONE_DIALER_CONFIG;
+
+  if (!config || typeof config !== "object") {
+    throw new Error("Chybí config.local.js nebo HA_PHONE_DIALER_CONFIG.");
   }
 
-  const config = await response.json();
-
   if (!config.ha_ip || !config.ha_port || !config.mobile_notify_service || !config.token) {
-    throw new Error("config.json je neúplný.");
+    throw new Error("config.local.js je neúplný.");
   }
 
   return config;
@@ -80,20 +80,13 @@ function normalizePhone(raw) {
     .replace(/^phone:/i, "")
     .trim();
 
-  if (!/^[+()\d\s.\-/]+$/.test(value)) {
-    return null;
-  }
+  if (!/^[+()\d\s.\/\-–—]+$/u.test(value)) return null;
 
-  value = value.replace(/[\s().\-/]/g, "");
-
-  if (!/^\+?\d+$/.test(value)) {
-    return null;
-  }
+  value = value.replace(/[\s().\/\-–—]/gu, "");
+  if (!/^\+?\d+$/.test(value)) return null;
 
   const digits = value.replace(/\D/g, "");
-  if (digits.length < 5 || digits.length > 15) {
-    return null;
-  }
+  if (digits.length < 5 || digits.length > 15) return null;
 
   return value;
 }
@@ -102,7 +95,7 @@ function parseNotifyService(value) {
   const prefix = "notify.";
 
   if (!value || !value.startsWith(prefix)) {
-    throw new Error("mobile_notify_service musí začínat 'notify.'");
+    throw new Error("mobile_notify_service musí začínat 'notify.'.");
   }
 
   return value.slice(prefix.length);
@@ -144,9 +137,7 @@ function callHomeAssistantWebSocket(config, service, phone) {
     };
 
     socket.onclose = () => {
-      if (!finished) {
-        finishError("Home Assistant WebSocket byl ukončen před dokončením požadavku.");
-      }
+      if (!finished) finishError("Home Assistant WebSocket byl ukončen před dokončením požadavku.");
     };
 
     socket.onmessage = (event) => {
@@ -173,7 +164,6 @@ function callHomeAssistantWebSocket(config, service, phone) {
 
       if (message.type === "auth_ok") {
         authenticated = true;
-
         socket.send(JSON.stringify({
           id: 1,
           type: "call_service",
@@ -187,7 +177,6 @@ function callHomeAssistantWebSocket(config, service, phone) {
             }
           }
         }));
-
         serviceSent = true;
         return;
       }
@@ -210,9 +199,9 @@ function callHomeAssistantWebSocket(config, service, phone) {
 }
 
 async function sendToPhone(phone) {
-  const config = await loadConfig();
+  const config = loadConfig();
   const service = parseNotifyService(config.mobile_notify_service);
-  return await callHomeAssistantWebSocket(config, service, phone);
+  return callHomeAssistantWebSocket(config, service, phone);
 }
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
@@ -222,7 +211,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const phone = normalizePhone(raw);
 
   if (!phone) {
-    showError("Vybraný text není platné telefonní číslo.");
+    reportError("Vybraný text není platné telefonní číslo.");
     return;
   }
 
@@ -231,8 +220,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     console.log("HA Phone Dialer: dialer požadavek odeslán:", phone);
     showSuccess();
   } catch (error) {
-    console.error("HA Phone Dialer:", error);
-    showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
+    reportError("Číslo se nepodařilo odeslat.", error);
   }
 });
 
@@ -240,9 +228,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "dial-phone") return;
 
   const phone = normalizePhone(message.raw || "");
-
   if (!phone) {
-    showError("Odkaz neobsahuje platné telefonní číslo.");
     sendResponse({ ok: false, error: "invalid_phone" });
     return;
   }
@@ -254,8 +240,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
     })
     .catch((error) => {
-      console.error("HA Phone Dialer:", error);
-      showError(`Číslo se nepodařilo odeslat. ${String(error)}`);
+      reportError("Číslo se nepodařilo odeslat.", error);
       sendResponse({ ok: false, error: String(error) });
     });
 
