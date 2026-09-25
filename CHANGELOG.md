@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.20
+
+- The configuration connection test now keeps the authenticated WebSocket open.
+- The Connect button changes to Disconnect after successful authentication and returns to Connect after disconnect or connection loss.
+
 ## 1.19
 
 - Added an extension toolbar action; clicking the HA Phone Dialer icon opens the configuration page directly.
