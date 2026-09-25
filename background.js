@@ -1,6 +1,7 @@
 // HA Phone Dialer
-// Version 1.18
+// Version 1.19
 // - Configuration is stored in chrome.storage.local and edited through options.html.
+// - Clicking the extension toolbar icon opens the configuration page.
 // - Legacy config.local.js is imported once as a migration fallback.
 // - Runtime logging modes: off / phone / single / all.
 
@@ -129,6 +130,7 @@ function createContextMenu() {
 }
 chrome.runtime.onInstalled.addListener(createContextMenu);
 chrome.runtime.onStartup.addListener(createContextMenu);
+chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
 function normalizePhone(raw) {
   if (!raw) return null;
