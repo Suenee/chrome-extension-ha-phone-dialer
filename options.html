@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HA Phone Dialer – Configuration</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="panel">
+    <header>
+      <img src="icon48.png" alt="">
+      <div><h1>HA Phone Dialer</h1><p>Home Assistant connection</p></div>
+    </header>
+    <section class="card">
+      <label>Home Assistant address<input id="ha_ip" type="text" placeholder="192.168.2.26" autocomplete="off"></label>
+      <label>Port<input id="ha_port" type="number" min="1" max="65535" value="8123"></label>
+      <label>Mobile notify service<input id="mobile_notify_service" type="text" placeholder="notify.mobile_app_souhvezdi_liry" autocomplete="off"></label>
+      <label>Long-Lived Access Token
+        <div class="token-row"><input id="token" type="password" autocomplete="off"><button id="show_token" class="small" type="button">Show</button></div>
+      </label>
+      <label>Log mode
+        <select id="log_mode">
+          <option value="off">off</option>
+          <option value="phone">phone</option>
+          <option value="single">single</option>
+          <option value="all">all</option>
+        </select>
+      </label>
+      <div id="status" class="status">Loading…</div>
+    </section>
+    <footer>
+      <button id="reset" class="secondary" type="button" title="Reset to defaults">↺ Reset</button>
+      <button id="connect" class="primary" type="button">Connect</button>
+      <button id="close" class="secondary" type="button">Close</button>
+    </footer>
+    <p class="hint">Valid values are saved automatically. The token is stored only in this Chrome profile.</p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
