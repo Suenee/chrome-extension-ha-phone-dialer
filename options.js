@@ -5,6 +5,8 @@ const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
 const statusEl = document.getElementById("status");
 let lastValid = null;
 let saveTimer = null;
+let connectionSocket = null;
+let connected = false;
 
 function readForm() {
   return {
@@ -45,31 +47,57 @@ async function load(){
   markValidity(c);
   setStatus(lastValid?"Configuration loaded.":"Complete the connection parameters.",lastValid?"ok":"");
 }
+async function disconnectConnection() {
+  if (connectionSocket) {
+    try { connectionSocket.close(); } catch {}
+    connectionSocket = null;
+  }
+  connected = false;
+  const button = document.getElementById("connect");
+  button.disabled = false;
+  button.textContent = "Connect";
+  setStatus("Disconnected from Home Assistant.", "");
+}
+
 async function testConnection(){
+  if (connected) { await disconnectConnection(); return; }
   if(!await saveIfValid()) return;
   const c=readForm();
   const button=document.getElementById("connect");
   button.disabled=true; button.textContent="Connecting…"; setStatus("Connecting to Home Assistant…","busy");
-  let socket, timer;
+  let timer;
   try{
     await new Promise((resolve,reject)=>{
-      socket=new WebSocket(`ws://${c.ha_ip}:${c.ha_port}/api/websocket`);
+      const socket=new WebSocket(`ws://${c.ha_ip}:${c.ha_port}/api/websocket`);
+      connectionSocket=socket;
       timer=setTimeout(()=>reject(new Error("Connection timeout.")),8000);
       socket.onerror=()=>reject(new Error("WebSocket connection failed."));
+      socket.onclose=()=>{
+        if (connectionSocket === socket) {
+          connectionSocket=null;
+          connected=false;
+          button.disabled=false;
+          button.textContent="Connect";
+        }
+      };
       socket.onmessage=e=>{
-        let m; try{m=JSON.parse(e.data)}catch{return}
-        if(m.type==="auth_required") socket.send(JSON.stringify({type:"auth",access_token:c.token}));
-        else if(m.type==="auth_invalid") reject(new Error(m.message||"Authentication failed."));
-        else if(m.type==="auth_ok") resolve();
+        let msg; try{msg=JSON.parse(e.data)}catch{return}
+        if(msg.type==="auth_required") socket.send(JSON.stringify({type:"auth",access_token:c.token}));
+        else if(msg.type==="auth_invalid") reject(new Error(msg.message||"Authentication failed."));
+        else if(msg.type==="auth_ok") resolve();
       };
     });
+    clearTimeout(timer);
+    connected=true;
     setStatus("Connected to Home Assistant.","ok");
     button.textContent="Disconnect";
-    setTimeout(()=>{ if(socket) socket.close(); button.textContent="Connect"; button.disabled=false; },1500);
+    button.disabled=false;
   }catch(error){
+    clearTimeout(timer);
+    if(connectionSocket) try{connectionSocket.close()}catch{}
+    connectionSocket=null; connected=false;
     setStatus(error.message,"error"); button.textContent="Connect"; button.disabled=false;
-    if(socket) try{socket.close()}catch{}
-  }finally{clearTimeout(timer)}
+  }
 }
 ids.forEach(id=>{el[id].addEventListener(id==="log_mode"?"change":"input",scheduleSave)});
 document.getElementById("show_token").addEventListener("click",e=>{
@@ -80,5 +108,5 @@ document.getElementById("reset").addEventListener("click",()=>{
   setStatus("Form reset. Last valid configuration remains active until new valid values are entered.","busy");
 });
 document.getElementById("connect").addEventListener("click",testConnection);
-document.getElementById("close").addEventListener("click",()=>window.close());
+document.getElementById("close").addEventListener("click",()=>{ if(connectionSocket) try{connectionSocket.close()}catch{} window.close(); });
 load();
