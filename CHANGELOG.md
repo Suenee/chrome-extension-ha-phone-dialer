@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.19
+
+- Added an extension toolbar action; clicking the HA Phone Dialer icon opens the configuration page directly.
+- Kept the standard Chrome Options page entry as a secondary path.
+
 ## 1.18
 
 - Added a Chrome configuration page for Home Assistant connection parameters.
