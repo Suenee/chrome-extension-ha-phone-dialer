@@ -2,39 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
-The project uses simple incremental versioning for the extension.
+## 1.18
+
+- Added a Chrome configuration page for Home Assistant connection parameters.
+- Configuration now auto-saves to `chrome.storage.local` only when valid; invalid edits keep the last valid configuration active.
+- Added Connect/Disconnect-style connection test, Reset and Close controls.
+- Added token show/hide control and runtime log-mode selector.
+- Added one-time migration from legacy private `config.local.js` into Chrome local storage.
+- Preserved direct `tel:` and `callto:` interception and context-menu dialing.
+
+## 1.17
+
+- Added runtime logging modes `off`, `phone`, `single` and `all`.
 
 ## 1.10
 
 - Based on the verified working 1.08 build.
 - Added a short local confirmation sound after a successful send.
-- Kept error notifications for failed requests.
 - Preserved direct interception of `tel:` and `callto:` links.
 - Preserved context-menu sending for selected phone numbers.
 
 ## 1.08
 
 - Added success and error feedback.
-- Added system notifications for successful sends and failures.
 
 ## 1.07
 
-- Improved interception of `tel:` and `callto:` links.
-- Added support for links inside iframes.
-- Improved detection of nested elements inside phone links.
-
-## 1.06
-
-- Added direct interception of `tel:` and `callto:` links.
-
-## 1.05
-
-- Added extension icons.
-- Simplified context-menu label.
-
-## 1.04
-
-- Corrected the Home Assistant legacy mobile notify service used for advanced Companion commands.
+- Improved interception of `tel:` and `callto:` links, including iframes and nested elements.
 
 ## 1.00
 
